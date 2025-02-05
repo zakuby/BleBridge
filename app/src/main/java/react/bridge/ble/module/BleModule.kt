@@ -12,9 +12,11 @@ import android.bluetooth.le.ScanResult
 import android.content.Context
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableArray
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -22,7 +24,7 @@ import kotlinx.coroutines.launch
 
 @SuppressLint("MissingPermission")
 class BleModule(
-    private val reactContext: Context
+    private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule() {
 
     private val bluetoothAdapter: BluetoothAdapter?
@@ -59,25 +61,37 @@ class BleModule(
 
     /**
      * This method to fetch the scan list of BLE Devices and will return List of Devices.
+     * and sending event "isScanning" to get status of scanning event.
      * @param promise Promise. To return callback for list of BLE Devices.
      */
     @ReactMethod
     fun scanBleListDevice(promise: Promise) {
         runCatching {
             if (!scanning) { // Stops scanning after a pre-defined scan period.
+                sendEventScanning(true)
                 scanning = true
                 bleScanner?.startScan(bleScanCallback)
                 CoroutineScope(Dispatchers.IO).launch {
                     delay(scanPeriod)
+                    sendEventScanning(false)
                     scanning = false
                     bleScanner?.stopScan(bleScanCallback)
                     promise.resolve(listDevicesToWriteableMap())
                 }
             } else {
+                sendEventScanning(false)
                 scanning = false
                 bleScanner?.stopScan(bleScanCallback)
             }
         }.onFailure { promise.reject(Exception("Please enable bluetooth permission first")) }
+    }
+
+    private fun sendEventScanning(isScanning: Boolean){
+        val params = Arguments.createMap().apply {
+            putBoolean("scanning", isScanning)
+        }
+        reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("isScanning", params)
     }
 
 
@@ -117,17 +131,15 @@ class BleModule(
     private fun listDevicesToWriteableMap() : WritableArray {
         val deviceList = Arguments.createArray()
         listDeviceBle
-            .forEach {
+            .map { it.device }
+            .forEach { device ->
                 val params = Arguments.createMap()
                 params.apply {
-                    it.device.also{ device ->
-                        putString("name", device.name)
-                        putString("address", device.address)
-                        device.bluetoothClass?.let {
-                            putInt("class", it.deviceClass)
-                        }
+                    putString("name", device.name)
+                    putString("address", device.address)
+                    device.bluetoothClass?.let {
+                        putInt("class", it.deviceClass)
                     }
-
                 }
                 deviceList.pushMap(params)
             }
